@@ -504,6 +504,7 @@ class SparkStudioChat:
                 "image": ("IMAGE",),
                 "timeout_seconds": ("INT", {"default": 180, "min": 5, "max": 3600}),
                 "strip_thinking": ("BOOLEAN", {"default": True}),
+                "fit_to_duration": ("BOOLEAN", {"default": False, "tooltip": "Trim the lyric to the render length. Off by default because the cap makes songs noticeably shorter; style and structure guidance still apply either way."}),
                 "hide_address": ("BOOLEAN", {"default": False, "tooltip": "Store the address privately and clear the field. It stays off screen and out of the workflow file. Switch off to see it again."}),
             },
             "hidden": {"prompt_graph": "PROMPT", "unique_id": "UNIQUE_ID"},
@@ -516,7 +517,8 @@ class SparkStudioChat:
 
     def generate(self, prompt, base_url, model, max_tokens, temperature, top_p,
                  system_prompt="", image=None, timeout_seconds=180, strip_thinking=True,
-                 hide_address=False, prompt_graph=None, unique_id=None):
+                 fit_to_duration=False, hide_address=False,
+                 prompt_graph=None, unique_id=None):
         base_url = resolve_base_url(base_url)
         url = chat_url(base_url)
         headers = {"Content-Type": "application/json"}
@@ -531,9 +533,11 @@ class SparkStudioChat:
         song_mode = context is not None
         seconds = context[0] if context else None
         style = context[1] if context else ""
-        # Length is optional. Song guidance applies whenever this text feeds a
-        # song node, even when the pack exposes no duration control at all.
-        budget = lyric_budget(seconds) if seconds else None
+        # Song guidance applies whenever this text feeds a song node. The
+        # numeric length cap does not, unless it is asked for: it trims a lyric
+        # hard, and a render length is normally an upper bound rather than a
+        # target to fill exactly.
+        budget = lyric_budget(seconds) if (seconds and fit_to_duration) else None
         required_sections = requested_sections(prompt, system_prompt) if song_mode else set()
         requirements = "\n".join(part for part in (str(system_prompt).strip(), str(prompt).strip()) if part)
         section_plan = concrete_section_plan(requirements) if song_mode else ""

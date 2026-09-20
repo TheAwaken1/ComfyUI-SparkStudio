@@ -170,20 +170,25 @@ copied between sections, and repeats the finished chorus exactly.
 
 ### Length
 
-Length is optional, because packs express it three different ways.
+By default the node does not cap the lyric. A render length is normally an upper
+bound, not a quota to fill, and capping makes songs noticeably shorter than most
+people want.
 
-| The song node exposes | What the node does |
+Switch on `fit_to_duration` if you do want the lyric sized to the render. The node
+then reads the length from the graph and aims for it, revising up to three times.
+
+| The song node exposes | What the node uses when the cap is on |
 |---|---|
-| Seconds, such as `max_duration`, `target_duration` or `duration` | Sizes the lyric to that many seconds |
-| A token budget, such as `semantic_max_tokens` | Converts it at 25 semantic tokens per second |
-| Nothing at all | Applies style and structure guidance with no length target |
+| Seconds, like `max_duration`, `target_duration` or `duration` | That value |
+| A token budget, like `semantic_max_tokens` | 25 semantic tokens per second |
+| Nothing | No cap is possible; style guidance still applies |
 
 The length is also found when it sits on a renderer further down the chain, as in
 FL-YuE2, or on a settings node feeding the sampler.
 
-Note that these values are usually an upper bound rather than an exact length.
-A `semantic_max_tokens` of 9000 reads as six minutes. Lower it to target a shorter
-song, for example 4500 for roughly three minutes.
+Short targets are the hardest to satisfy. Around three minutes there is room for
+roughly 24 lines, so a request for many sections will overshoot. The node keeps the
+closest draft and says how far off it landed rather than failing the run.
 
 A prompt not connected to a song node behaves as an ordinary chat node.
 

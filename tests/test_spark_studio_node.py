@@ -187,7 +187,7 @@ class SparkStudioNodeTests(unittest.TestCase):
         with patch.object(node, "build_opener", return_value=opener):
             result = node.SparkStudioChat().generate(
                 "Write a song for Leo", "http://spark:8888/v1", "test-model",
-                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18",
+                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18", fit_to_duration=True,
             )[0]
         self.assertEqual(result, polished_text)
         self.assertEqual(len(opener.requests), 2)
@@ -205,7 +205,7 @@ class SparkStudioNodeTests(unittest.TestCase):
         with patch.object(node, "build_opener", return_value=opener):
             text = node.SparkStudioChat().generate(
                 "Write a song", "http://spark:8888/v1", "test-model",
-                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18",
+                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18", fit_to_duration=True,
             )[0]
         self.assertIn("Too many words to sing", text)
         self.assertEqual(len(opener.requests), 3, "it still tries three times")
@@ -220,7 +220,7 @@ class SparkStudioNodeTests(unittest.TestCase):
         with patch.object(node, "build_opener", return_value=opener):
             text = node.SparkStudioChat().generate(
                 "Write a song", "http://spark:8888/v1", "test-model",
-                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18",
+                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18", fit_to_duration=True,
             )[0]
         self.assertIn("Closer to the target now", text)
 
@@ -469,6 +469,33 @@ class SparkStudioNodeTests(unittest.TestCase):
                 with patch.dict(os.environ, {}, clear=True):
                     self.assertEqual(node.resolve_base_url("http://typed:8000/v1"),
                                      "http://typed:8000/v1")
+
+
+    def test_length_cap_is_off_unless_asked_for(self):
+        """The cap trims hard, and a render length is an upper bound."""
+        self.assertFalse(
+            node.SparkStudioChat.INPUT_TYPES()["optional"]["fit_to_duration"][1]["default"])
+        long_text = "[verse]" + NEWLINE + NEWLINE.join(["Plenty of words to sing here"] * 40)
+        opener = SequenceOpener([long_text])
+        with patch.object(node, "build_opener", return_value=opener):
+            out = node.SparkStudioChat().generate(
+                "Write a song", "http://spark:8888/v1", "test-model",
+                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18",
+            )[0]
+        self.assertEqual(len(opener.requests), 1, "no revision pass without the cap")
+        self.assertEqual(out.count("Plenty of words to sing here"), 40, "nothing trimmed")
+
+    def test_style_guidance_still_applies_without_the_cap(self):
+        opener = SequenceOpener(["[verse]" + NEWLINE + "A line"])
+        with patch.object(node, "build_opener", return_value=opener):
+            node.SparkStudioChat().generate(
+                "Write a song", "http://spark:8888/v1", "test-model",
+                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18",
+            )
+        sent = opener.requests[0]["messages"][-1]["content"]
+        self.assertIn("release-quality song", sent)
+        self.assertIn("Slow R&B ballad", sent)
+        self.assertNotIn("absolute limits", sent, "no numeric target without the cap")
 
 
 if __name__ == "__main__":

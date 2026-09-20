@@ -35,6 +35,30 @@ def models_url(base_url):
     return (chat[: -len(suffix)] if chat.endswith(suffix) else chat) + "/models"
 
 
+def _unreachable(url, error):
+    """Explain a connection failure in terms the person can act on.
+
+    The most common mistake is pasting an example host from the README
+    instead of the machine's real address, which surfaces as a DNS failure.
+    """
+    reason = str(getattr(error, "reason", None) or error)
+    host = urlsplit(url).hostname or ""
+    lowered = reason.lower()
+    if "getaddrinfo" in lowered or "not known" in lowered or "nodename" in lowered:
+        hint = (f"The host name {host!r} does not exist on this network. If you copied "
+                "an example address, replace it with your server's real one, such as "
+                "its LAN IP or Tailscale address.")
+    elif "refused" in lowered:
+        hint = (f"Nothing is listening on {host} at that port. Start the server, or "
+                "correct the port.")
+    elif "timed out" in lowered or "timeout" in lowered:
+        hint = ("The host is not answering. This is usually a firewall, or a server "
+                "bound to 127.0.0.1 on a different machine.")
+    else:
+        hint = "Check the host, port, or tunnel."
+    return RuntimeError(f"Cannot reach {url}: {reason}. {hint}")
+
+
 def get_json(url, headers, timeout_seconds):
     request = Request(url, headers=headers, method="GET")
     try:
@@ -44,7 +68,7 @@ def get_json(url, headers, timeout_seconds):
         detail = error.read(1200).decode("utf-8", errors="replace")
         raise RuntimeError(f"Endpoint returned HTTP {error.code}: {detail}") from error
     except URLError as error:
-        raise RuntimeError(f"Cannot reach {url}: {error.reason}. Check the host, port, or tunnel.") from error
+        raise _unreachable(url, error) from error
 
 
 def discover_model(base_url, headers, timeout_seconds):
@@ -251,7 +275,7 @@ def post_chat(url, payload, headers, timeout_seconds):
         detail = error.read(1200).decode("utf-8", errors="replace")
         raise RuntimeError(f"Spark Studio returned HTTP {error.code}: {detail}") from error
     except URLError as error:
-        raise RuntimeError(f"Cannot reach {url}: {error.reason}. Check the Spark host/port or SSH tunnel.") from error
+        raise _unreachable(url, error) from error
 
 
 def section_brief(label):

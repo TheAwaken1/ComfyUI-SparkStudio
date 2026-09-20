@@ -246,6 +246,9 @@ class SparkStudioNodeTests(unittest.TestCase):
         self.assertIn("localhost", base_url)
         source = (Path(node.__file__).read_text(encoding="utf-8")
                   if getattr(node, "__file__", None) else NODE_PATH.read_text(encoding="utf-8"))
+        # Loopback and the documentation range are fine; a real host is not.
+        for allowed in ("127.0.0.1", "0.0.0.0", "192.0.2."):
+            source = source.replace(allowed, "")
         self.assertNotRegex(source, r"[0-9]{1,3}(?:[.][0-9]{1,3}){3}")
 
     def test_render_duration_is_read_under_either_input_name(self):
@@ -254,6 +257,28 @@ class SparkStudioNodeTests(unittest.TestCase):
             graph["3"]["inputs"] = {"composition": ["2", 0], name: 150}
             with self.subTest(name=name):
                 self.assertEqual(node.song_context(graph, "18")[0], 150)
+
+
+    def test_unresolvable_host_says_to_replace_the_example_address(self):
+        """Pasting the README's placeholder host is the most common mistake."""
+        from urllib.error import URLError
+        import socket
+
+        error = URLError(socket.gaierror(11001, "getaddrinfo failed"))
+        message = str(node._unreachable("http://YOUR-SPARK-ADDRESS:7860/api/engine/v1/models", error))
+        self.assertIn("YOUR-SPARK-ADDRESS", message)
+        self.assertIn("does not exist on this network", message)
+        self.assertIn("Tailscale", message)
+
+    def test_refused_and_timeout_get_their_own_guidance(self):
+        from urllib.error import URLError
+
+        refused = str(node._unreachable("http://192.0.2.5:7860/v1/models",
+                                        URLError(ConnectionRefusedError("Connection refused"))))
+        self.assertIn("Nothing is listening", refused)
+        timed = str(node._unreachable("http://192.0.2.5:7860/v1/models",
+                                      URLError(TimeoutError("timed out"))))
+        self.assertIn("firewall", timed)
 
 
 if __name__ == "__main__":

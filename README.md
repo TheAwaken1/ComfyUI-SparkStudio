@@ -28,15 +28,25 @@ git clone https://github.com/TheAwaken1/ComfyUI-SparkStudio
 
 Restart ComfyUI. No extra Python packages are needed.
 
+## Quick start
+
+1. Find your server's address. On the Spark itself that is `localhost`. From
+   another machine it is the Spark's LAN IP or Tailscale address, such as
+   `100.x.y.z`. `YOUR-SPARK-ADDRESS` below is a placeholder, not a real host.
+2. Confirm it answers before wiring anything up:
+   `curl http://YOUR-SPARK-ADDRESS:7860/api/engine/v1/models`
+   You should get a JSON list of models. If that fails, the node will fail too.
+3. Paste that same base URL into `base_url` and leave `model` blank.
+
 ## Connecting
 
 Set `base_url` to your server. Three forms are accepted:
 
 | Form | Example | Use when |
 |------|---------|----------|
-| Spark Studio gateway | `http://spark-host:7860/api/engine/v1` | You run [Spark Studio](https://github.com/TheAwaken1/Spark-Studio) |
-| Engine base | `http://spark-host:8000/v1` | vLLM, SGLang, llama.cpp, LM Studio, Ollama |
-| Full chat URL | `http://spark-host:8000/v1/chat/completions` | Anything unusual |
+| Spark Studio gateway | `http://YOUR-SPARK-ADDRESS:7860/api/engine/v1` | You run [Spark Studio](https://github.com/TheAwaken1/Spark-Studio) |
+| Engine base | `http://YOUR-SPARK-ADDRESS:8000/v1` | vLLM, SGLang, llama.cpp, LM Studio, Ollama |
+| Full chat URL | `http://YOUR-SPARK-ADDRESS:8000/v1/chat/completions` | Anything unusual |
 
 The Spark Studio gateway is worth preferring if you have it, because that one URL
 follows whichever engine and model is currently live. Swapping models does not break
@@ -51,7 +61,7 @@ A model bound to `127.0.0.1` on the Spark is not reachable at `127.0.0.1` from y
 desktop. Use one of:
 
 - Tailscale, then point `base_url` at the Spark's tailnet address
-- An SSH tunnel: `ssh -L 8000:127.0.0.1:8000 user@spark-host`
+- An SSH tunnel: `ssh -L 8000:127.0.0.1:8000 user@YOUR-SPARK-ADDRESS`
 - Bind the server to the LAN, only on a network you trust
 
 ### Authentication
@@ -104,7 +114,7 @@ looks for either.
 The node is a thin client. The same request works from anything.
 
 ```bash
-curl http://spark-host:7860/api/engine/v1/chat/completions \
+curl http://YOUR-SPARK-ADDRESS:7860/api/engine/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"","messages":[{"role":"user","content":"Write one line."}]}'
 ```
@@ -113,7 +123,7 @@ curl http://spark-host:7860/api/engine/v1/chat/completions \
 import json, urllib.request
 body = {"model": "", "messages": [{"role": "user", "content": "Write one line."}]}
 req = urllib.request.Request(
-    "http://spark-host:7860/api/engine/v1/chat/completions",
+    "http://YOUR-SPARK-ADDRESS:7860/api/engine/v1/chat/completions",
     data=json.dumps(body).encode(),
     headers={"Content-Type": "application/json"},
 )
@@ -121,7 +131,7 @@ print(json.load(urllib.request.urlopen(req))["choices"][0]["message"]["content"]
 ```
 
 ```javascript
-const r = await fetch("http://spark-host:7860/api/engine/v1/chat/completions", {
+const r = await fetch("http://YOUR-SPARK-ADDRESS:7860/api/engine/v1/chat/completions", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ model: "", messages: [{ role: "user", content: "Write one line." }] }),

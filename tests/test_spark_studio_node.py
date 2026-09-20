@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -357,6 +358,38 @@ class SparkStudioNodeTests(unittest.TestCase):
                 "composition": ["2", 0], "max_duration": 150}},
         })
         self.assertEqual(node.song_context(graph, "18")[0], 150)
+
+
+    def test_address_can_come_from_the_environment(self):
+        """Typing a private address saves it into the workflow file."""
+        with patch.dict(os.environ, {"SPARK_STUDIO_BASE_URL": "http://10.1.2.3:7860/v1"}):
+            self.assertEqual(node.resolve_base_url(""), "http://10.1.2.3:7860/v1")
+            self.assertEqual(node.resolve_base_url("env"), "http://10.1.2.3:7860/v1")
+            self.assertEqual(node.resolve_base_url("http://typed:8000/v1"), "http://typed:8000/v1")
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ValueError) as caught:
+                node.resolve_base_url("")
+            self.assertIn("SPARK_STUDIO_BASE_URL", str(caught.exception))
+
+    def test_environment_address_is_masked_in_messages(self):
+        """Errors must not reveal the address during a screen recording."""
+        from urllib.error import URLError
+        import socket
+
+        with patch.dict(os.environ, {"SPARK_STUDIO_BASE_URL": "http://10.1.2.3:7860/v1"}):
+            message = str(node._unreachable("http://10.1.2.3:7860/v1/models",
+                                            URLError(socket.gaierror(11001, "getaddrinfo failed"))))
+        self.assertNotIn("10.1.2.3", message)
+        self.assertIn("<hidden>", message)
+
+    def test_served_models_lists_every_id(self):
+        class Listing:
+            def open(self, request, timeout):
+                return io.BytesIO(json.dumps(
+                    {"data": [{"id": "one"}, {"id": "two"}, {"nope": 1}]}).encode())
+
+        with patch.object(node, "build_opener", return_value=Listing()):
+            self.assertEqual(node.served_models("http://spark:8000/v1"), ["one", "two"])
 
 
 if __name__ == "__main__":

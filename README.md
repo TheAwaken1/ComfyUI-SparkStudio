@@ -36,7 +36,16 @@ Restart ComfyUI. No extra Python packages are needed.
 2. Confirm it answers before wiring anything up:
    `curl http://YOUR-SPARK-ADDRESS:7860/api/engine/v1/models`
    You should get a JSON list of models. If that fails, the node will fail too.
-3. Paste that same base URL into `base_url` and leave `model` blank.
+3. Paste that same base URL into `base_url`. The node fills `model` in for you
+   from whatever the server is running. Click the model button on the node to
+   re-check or to pick a different one.
+
+### Finding your address
+
+There is no discovery, so you do tell the node where the server is. On the Spark
+itself that is `localhost`. From another machine, run `hostname -I` on the Spark for
+its LAN address, or `tailscale ip -4` for its tailnet address. Either works as long
+as the desktop can reach it.
 
 ## Connecting
 
@@ -64,6 +73,23 @@ desktop. Use one of:
 - An SSH tunnel: `ssh -L 8000:127.0.0.1:8000 user@YOUR-SPARK-ADDRESS`
 - Bind the server to the LAN, only on a network you trust
 
+### Hiding your address
+
+A typed address is saved inside the workflow file and is visible in screenshots and
+screen recordings. To keep it private, set `SPARK_STUDIO_BASE_URL` in ComfyUI's
+environment and leave `base_url` empty, or set it to `env`.
+
+```bash
+set SPARK_STUDIO_BASE_URL=http://100.x.y.z:7860/api/engine/v1
+```
+
+The node then reads the address at run time. It never appears on the node, never
+enters the workflow JSON, and is masked as `<hidden>` in any error message, so a
+failed connection during a recording does not leak it either.
+
+This is also the right way to share a workflow that uses the node. The person you
+send it to sets their own address once and the graph works unchanged.
+
 ### Authentication
 
 If your endpoint requires a bearer token, set `SPARK_STUDIO_API_KEY` in ComfyUI's
@@ -78,7 +104,7 @@ Spark Studio itself has no authentication. Do not expose port 7860 to the intern
 |-------|------|-------|
 | prompt | STRING | The request |
 | base_url | STRING | See the table above |
-| model | STRING | Blank means auto-detect |
+| model | STRING | Filled in from the server; blank auto-detects at run time |
 | max_tokens | INT | Output limit, not song length |
 | temperature | FLOAT | |
 | top_p | FLOAT | |

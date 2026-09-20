@@ -14,6 +14,34 @@ import numpy as np
 from PIL import Image
 
 
+def resolve_base_url(base_url):
+    """Let the address live in the environment instead of inside the graph.
+
+    A private Spark address typed into the widget is saved into the workflow
+    file and is visible in any screenshot or screen recording. Setting
+    SPARK_STUDIO_BASE_URL instead keeps it out of both.
+    """
+    typed = str(base_url or "").strip()
+    if typed and typed.lower() not in ("env", "$env", "hidden"):
+        return typed
+    from_env = os.getenv("SPARK_STUDIO_BASE_URL", "").strip()
+    if from_env:
+        return from_env
+    raise ValueError(
+        "No server address. Type one into base_url, or set SPARK_STUDIO_BASE_URL "
+        "in ComfyUI's environment and leave base_url empty to keep the address "
+        "out of the workflow file and off screen recordings.")
+
+
+def hide_private_host(url):
+    """Mask an address that was supplied through the environment."""
+    private = os.getenv("SPARK_STUDIO_BASE_URL", "").strip()
+    if not private:
+        return url
+    host = urlsplit(private).hostname or ""
+    return url.replace(host, "<hidden>") if host else url
+
+
 def chat_url(base_url):
     base = str(base_url or "").strip().rstrip("/")
     parts = urlsplit(base)
@@ -45,18 +73,18 @@ def _unreachable(url, error):
     host = urlsplit(url).hostname or ""
     lowered = reason.lower()
     if "getaddrinfo" in lowered or "not known" in lowered or "nodename" in lowered:
-        hint = (f"The host name {host!r} does not exist on this network. If you copied "
+        hint = (f"The host name {hide_private_host(host)!r} does not exist on this network. If you copied "
                 "an example address, replace it with your server's real one, such as "
                 "its LAN IP or Tailscale address.")
     elif "refused" in lowered:
-        hint = (f"Nothing is listening on {host} at that port. Start the server, or "
+        hint = (f"Nothing is listening on {hide_private_host(host)} at that port. Start the server, or "
                 "correct the port.")
     elif "timed out" in lowered or "timeout" in lowered:
         hint = ("The host is not answering. This is usually a firewall, or a server "
                 "bound to 127.0.0.1 on a different machine.")
     else:
         hint = "Check the host, port, or tunnel."
-    return RuntimeError(f"Cannot reach {url}: {reason}. {hint}")
+    return RuntimeError(f"Cannot reach {hide_private_host(url)}: {reason}. {hint}")
 
 
 def get_json(url, headers, timeout_seconds):
@@ -66,7 +94,7 @@ def get_json(url, headers, timeout_seconds):
             return json.load(response)
     except HTTPError as error:
         detail = error.read(1200).decode("utf-8", errors="replace")
-        raise RuntimeError(f"Endpoint returned HTTP {error.code}: {detail}") from error
+        raise RuntimeError(f"Endpoint {hide_private_host(url)} returned HTTP {error.code}: {detail}") from error
     except URLError as error:
         raise _unreachable(url, error) from error
 
@@ -423,7 +451,7 @@ class SparkStudioChat:
         return {
             "required": {
                 "prompt": ("STRING", {"multiline": True, "default": "Write YuE2 song lyrics only. Use [verse] and [chorus] section tags."}),
-                "base_url": ("STRING", {"default": "http://localhost:7860/api/engine/v1", "tooltip": "Spark Studio gateway, or any OpenAI-compatible base such as http://spark-host:8000/v1"}),
+                "base_url": ("STRING", {"default": "http://localhost:7860/api/engine/v1", "tooltip": "Your server address. Leave empty to read SPARK_STUDIO_BASE_URL from the environment, which keeps it out of the workflow and off screen recordings."}),
                 "model": ("STRING", {"default": "", "tooltip": "Leave blank to use the first model the endpoint serves"}),
                 "max_tokens": ("INT", {"default": 1024, "min": 1, "max": 32768}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
@@ -446,6 +474,7 @@ class SparkStudioChat:
     def generate(self, prompt, base_url, model, max_tokens, temperature, top_p,
                  system_prompt="", image=None, timeout_seconds=180, strip_thinking=True,
                  prompt_graph=None, unique_id=None):
+        base_url = resolve_base_url(base_url)
         url = chat_url(base_url)
         headers = {"Content-Type": "application/json"}
         api_key = os.getenv("SPARK_STUDIO_API_KEY", "").strip()
@@ -593,3 +622,34 @@ class SparkStudioChat:
         raise ValueError(f"Spark Studio could not fit lyrics into {seconds}s "
                          f"({budget[0]}-{budget[1]} lines/{budget[2]}-{budget[3]} words) "
                          "after 3 tries. Adjust the song idea or allow a longer render.")
+
+
+def served_models(base_url, timeout_seconds=10):
+    """Every model id the endpoint reports, for the model picker."""
+    headers = {"Content-Type": "application/json"}
+    api_key = os.getenv("SPARK_STUDIO_API_KEY", "").strip()
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
+    payload = get_json(models_url(resolve_base_url(base_url)), headers, timeout_seconds)
+    entries = payload.get("data") if isinstance(payload, dict) else None
+    return [str(entry["id"]).strip() for entry in entries or []
+            if isinstance(entry, dict) and str(entry.get("id") or "").strip()]
+
+
+async def _models_endpoint(request):
+    """Let the node's UI list what the server is running."""
+    from aiohttp import web
+
+    try:
+        return web.json_response({"models": served_models(request.query.get("base_url", ""))})
+    except Exception as error:
+        return web.json_response({"models": [], "error": str(error)})
+
+
+try:  # Only available inside ComfyUI; the tests import this module standalone.
+    from server import PromptServer
+
+    if getattr(PromptServer, "instance", None) is not None:
+        PromptServer.instance.routes.get("/sparkstudio/models")(_models_endpoint)
+except Exception:  # pragma: no cover - no server in a bare import
+    pass

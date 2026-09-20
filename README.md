@@ -90,31 +90,40 @@ as `<hidden>` in error messages, so a failed connection mid-recording cannot lea
 
 #### Setting the variable
 
-In Pinokio, open the launcher's `start.js` and add it to the `env` block that is
-already there:
+Pick whichever matches how you launch ComfyUI.
 
-```js
-env: {
-  TOKENIZERS_PARALLELISM: "false",
-  SPARK_STUDIO_BASE_URL: "http://100.x.y.z:7860/api/engine/v1"
-},
-```
+**Windows, permanently.** Search the Start menu for "Edit environment variables for
+your account", add a new variable named `SPARK_STUDIO_BASE_URL` with your address as
+the value, then restart ComfyUI.
 
-Save, stop the app, and start it again.
+**Windows, just this session.** In the same terminal you launch from:
 
-Launching ComfyUI yourself instead, set it in the same terminal first:
-
-```bash
+```bat
 set SPARK_STUDIO_BASE_URL=http://100.x.y.z:7860/api/engine/v1
 python main.py
 ```
 
-On macOS or Linux use `export` in place of `set`. To make it permanent on Windows,
-search for "Edit environment variables for your account" and add it there, then
-restart ComfyUI.
+**macOS or Linux.** Same idea, with `export`. Add it to your shell profile to make
+it permanent:
 
-Either way, confirm it worked: leave `base_url` empty and run the node. If the
-variable is missing the node says so instead of failing silently.
+```bash
+export SPARK_STUDIO_BASE_URL=http://100.x.y.z:7860/api/engine/v1
+python main.py
+```
+
+**Portable and desktop builds** usually start from a `.bat` or `.sh` file. Add the
+`set` or `export` line above the line that runs `python main.py`.
+
+**Pinokio.** Open the app's `ENVIRONMENT` file and add the variable at the end. It is
+read automatically whenever a script runs, and it is excluded from git, so a private
+address never reaches a published launcher:
+
+```
+SPARK_STUDIO_BASE_URL=http://100.x.y.z:7860/api/engine/v1
+```
+
+Whichever you use, confirm it took effect by clearing `base_url` on the node and
+running it. If the variable is missing the node says so rather than failing vaguely.
 
 ### Authentication
 

@@ -1,0 +1,1 @@
+# numpy and Pillow ship with ComfyUI; nothing extra is required.

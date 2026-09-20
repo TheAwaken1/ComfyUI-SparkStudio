@@ -187,6 +187,17 @@ song, for example 4500 for roughly three minutes.
 
 A prompt not connected to a song node behaves as an ordinary chat node.
 
+### When the lyric will not fit
+
+The node revises up to three times to land inside the target, then returns the
+closest draft it managed and says so in the console. It never fails the run over
+length, because losing a whole render to a word count is worse than a lyric that
+runs slightly long.
+
+Short targets are the hardest to satisfy. Around three minutes there is room for
+roughly 24 lines, so a request for many sections will always overshoot. Raise the
+render duration or ask for fewer sections if the console keeps reporting a miss.
+
 ## Programmatic use
 
 The node is a thin client. The same request works from anything.

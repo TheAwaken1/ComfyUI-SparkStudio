@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import numpy as np
 
+NEWLINE = chr(10)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_PATH = ROOT / "spark_studio_node.py"
@@ -196,15 +198,38 @@ class SparkStudioNodeTests(unittest.TestCase):
         self.assertIn("demanding professional songwriter", opener.requests[1]["messages"][-1]["content"])
         self.assertIn("never sing terms", opener.requests[1]["messages"][-1]["content"])
 
-    def test_overlong_song_errors_instead_of_silent_truncation(self):
-        long_text = "[verse]\n" + "\n".join(["Too many words to sing"] * 40)
+    def test_overlong_song_returns_the_closest_draft_instead_of_failing(self):
+        """A length target is a preference; failing would discard the render."""
+        long_text = "[verse]" + NEWLINE + NEWLINE.join(["Too many words to sing"] * 40)
         opener = SequenceOpener([long_text] * 3)
         with patch.object(node, "build_opener", return_value=opener):
-            with self.assertRaisesRegex(ValueError, "could not fit lyrics"):
-                node.SparkStudioChat().generate(
-                    "Write a song", "http://spark:8888/v1", "test-model",
-                    512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18",
-                )
+            text = node.SparkStudioChat().generate(
+                "Write a song", "http://spark:8888/v1", "test-model",
+                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18",
+            )[0]
+        self.assertIn("Too many words to sing", text)
+        self.assertEqual(len(opener.requests), 3, "it still tries three times")
+
+    def test_closest_draft_is_the_one_returned(self):
+        drafts = [
+            "[verse]" + NEWLINE + NEWLINE.join(["Way too many words here"] * 40),
+            "[verse]" + NEWLINE + NEWLINE.join(["Closer to the target now"] * 30),
+            "[verse]" + NEWLINE + NEWLINE.join(["Far too many words again"] * 60),
+        ]
+        opener = SequenceOpener(drafts)
+        with patch.object(node, "build_opener", return_value=opener):
+            text = node.SparkStudioChat().generate(
+                "Write a song", "http://spark:8888/v1", "test-model",
+                512, 0.7, 0.95, prompt_graph=song_graph(), unique_id="18",
+            )[0]
+        self.assertIn("Closer to the target now", text)
+
+    def test_budget_miss_prefers_complete_section_sets(self):
+        budget = (20, 28, 117, 172)
+        self.assertLess(node.budget_miss(24, 145, budget, True),
+                        node.budget_miss(24, 145, budget, False))
+        self.assertLess(node.budget_miss(28, 180, budget, True),
+                        node.budget_miss(40, 300, budget, True))
 
 
     def test_models_url_sits_beside_the_chat_url(self):

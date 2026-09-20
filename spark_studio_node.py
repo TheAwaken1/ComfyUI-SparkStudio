@@ -319,6 +319,14 @@ def lyric_budget(seconds):
     return min_lines, max_lines, min_words, max_words
 
 
+def budget_miss(lines, words, budget, complete):
+    """How far a draft sits outside the target, for picking the best attempt."""
+    min_lines, max_lines, min_words, max_words = budget
+    line_miss = max(0, min_lines - lines) + max(0, lines - max_lines)
+    word_miss = max(0, min_words - words) + max(0, words - max_words)
+    return line_miss * 4 + word_miss + (0 if complete else 1000)
+
+
 def lyrics_fit_duration(lines, words, seconds, budget):
     """Reject both rushed walls of words and skeletal, underwritten songs."""
     singing_seconds = max(12, int(seconds) - max(20, round(int(seconds) * 0.15)))
@@ -617,6 +625,8 @@ class SparkStudioChat:
             target = f"{seconds}s" if seconds else "unspecified length"
             print(f"[SparkStudio] Section-written lyrics for {target}: {lines} lines, {words} words")
             return (text,)
+        best_text = None
+        best_miss = None
         for attempt in range(3 if budget else 1):
             result = post_chat(url, payload, headers, timeout_seconds)
             text = repair_text_encoding(extract_text(result))
@@ -629,6 +639,9 @@ class SparkStudioChat:
                 return (text,)
             lines, words = lyric_size(text)
             complete = has_requested_sections(text, required_sections)
+            miss = budget_miss(lines, words, budget, complete)
+            if best_miss is None or miss < best_miss:
+                best_text, best_miss = text, miss
             if attempt > 0 and complete and lyrics_fit_duration(lines, words, seconds, budget):
                 print(f"[SparkStudio] Lyrics fit {seconds}s budget: {lines} lines, {words} words")
                 return (text,)
@@ -654,9 +667,14 @@ class SparkStudioChat:
                     {"type": "text", "text": payload["messages"][-1]["content"]}
                 ] + parts
             payload["temperature"] = min(1.0, max(0.35, float(temperature) + 0.1 * attempt))
-        raise ValueError(f"Spark Studio could not fit lyrics into {seconds}s "
-                         f"({budget[0]}-{budget[1]} lines/{budget[2]}-{budget[3]} words) "
-                         "after 3 tries. Adjust the song idea or allow a longer render.")
+        # A length target is a preference, not a reason to throw away a whole
+        # render. Hand back the closest draft and say how far off it is.
+        lines, words = lyric_size(best_text)
+        print(f"[SparkStudio] Keeping the closest draft after 3 tries: {lines} lines, "
+              f"{words} words against a {seconds}s target of {budget[0]}-{budget[1]} lines "
+              f"and {budget[2]}-{budget[3]} words. Raise the render duration, or shorten "
+              "the song idea, if the timing feels rushed.")
+        return (best_text,)
 
 
 def served_models(base_url, timeout_seconds=10):

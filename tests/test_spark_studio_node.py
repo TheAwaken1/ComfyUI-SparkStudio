@@ -406,5 +406,45 @@ class SparkStudioNodeTests(unittest.TestCase):
         self.assertEqual(sent[0], sent[1])
 
 
+    def test_hidden_address_round_trips_through_the_private_store(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            target = os.path.join(folder, "sparkstudio_address.json")
+            with patch.object(node, "private_address_file", lambda: target):
+                self.assertEqual(node.load_private_address(), "")
+                node.save_private_address("http://10.9.8.7:7860/api/engine/v1")
+                self.assertEqual(node.load_private_address(),
+                                 "http://10.9.8.7:7860/api/engine/v1")
+                with patch.dict(os.environ, {}, clear=True):
+                    self.assertEqual(node.resolve_base_url(""),
+                                     "http://10.9.8.7:7860/api/engine/v1")
+                    # A masked message must not leak the stored host either.
+                    self.assertNotIn("10.9.8.7",
+                                     node.hide_private_host("http://10.9.8.7:7860/v1/models"))
+                node.save_private_address("")
+                self.assertEqual(node.load_private_address(), "")
+
+    def test_private_store_rejects_a_nonsense_address(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            target = os.path.join(folder, "sparkstudio_address.json")
+            with patch.object(node, "private_address_file", lambda: target):
+                with self.assertRaises(ValueError):
+                    node.save_private_address("not-a-url")
+
+    def test_typed_address_beats_the_store(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            target = os.path.join(folder, "sparkstudio_address.json")
+            with patch.object(node, "private_address_file", lambda: target):
+                node.save_private_address("http://10.9.8.7:7860/v1")
+                with patch.dict(os.environ, {}, clear=True):
+                    self.assertEqual(node.resolve_base_url("http://typed:8000/v1"),
+                                     "http://typed:8000/v1")
+
+
 if __name__ == "__main__":
     unittest.main()

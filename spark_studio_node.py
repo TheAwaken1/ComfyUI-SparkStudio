@@ -14,6 +14,37 @@ import numpy as np
 from PIL import Image
 
 
+def private_address_file():
+    """Where a hidden address is kept: outside the graph, outside the repo."""
+    try:
+        import folder_paths
+
+        directory = folder_paths.get_user_directory()
+    except Exception:
+        directory = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(directory, "sparkstudio_address.json")
+
+
+def load_private_address():
+    try:
+        with open(private_address_file(), encoding="utf-8") as handle:
+            return str(json.load(handle).get("base_url") or "").strip()
+    except Exception:
+        return ""
+
+
+def save_private_address(base_url):
+    """Store the address for the node's hide toggle, or clear it when empty."""
+    address = str(base_url or "").strip()
+    if address:
+        chat_url(address)  # reject anything that is not a plain http(s) base
+    path = private_address_file()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"base_url": address}, handle)
+    return address
+
+
 def resolve_base_url(base_url):
     """Let the address live in the environment instead of inside the graph.
 
@@ -27,19 +58,22 @@ def resolve_base_url(base_url):
     from_env = os.getenv("SPARK_STUDIO_BASE_URL", "").strip()
     if from_env:
         return from_env
+    saved = load_private_address()
+    if saved:
+        return saved
     raise ValueError(
-        "No server address. Type one into base_url, or set SPARK_STUDIO_BASE_URL "
-        "in ComfyUI's environment and leave base_url empty to keep the address "
-        "out of the workflow file and off screen recordings.")
+        "No server address. Type one into base_url, or switch on hide_address "
+        "to store it privately, or set SPARK_STUDIO_BASE_URL in the environment.")
 
 
 def hide_private_host(url):
-    """Mask an address that was supplied through the environment."""
-    private = os.getenv("SPARK_STUDIO_BASE_URL", "").strip()
-    if not private:
-        return url
-    host = urlsplit(private).hostname or ""
-    return url.replace(host, "<hidden>") if host else url
+    """Mask an address the person chose to keep out of sight."""
+    masked = str(url or "")
+    for private in (os.getenv("SPARK_STUDIO_BASE_URL", "").strip(), load_private_address()):
+        host = urlsplit(private).hostname if private else ""
+        if host:
+            masked = masked.replace(host, "<hidden>")
+    return masked
 
 
 def chat_url(base_url):
@@ -462,7 +496,7 @@ class SparkStudioChat:
                 "image": ("IMAGE",),
                 "timeout_seconds": ("INT", {"default": 180, "min": 5, "max": 3600}),
                 "strip_thinking": ("BOOLEAN", {"default": True}),
-                "hide_address": ("BOOLEAN", {"default": False, "tooltip": "Hide base_url on the node while screen recording. The address is still inside the workflow file; set SPARK_STUDIO_BASE_URL to keep it out of that too."}),
+                "hide_address": ("BOOLEAN", {"default": False, "tooltip": "Store the address privately and clear the field. It stays off screen and out of the workflow file. Switch off to see it again."}),
             },
             "hidden": {"prompt_graph": "PROMPT", "unique_id": "UNIQUE_ID"},
         }
@@ -637,6 +671,19 @@ def served_models(base_url, timeout_seconds=10):
             if isinstance(entry, dict) and str(entry.get("id") or "").strip()]
 
 
+async def _address_endpoint(request):
+    """Read or store the hidden address for the node's toggle."""
+    from aiohttp import web
+
+    try:
+        if request.method == "GET":
+            return web.json_response({"base_url": load_private_address()})
+        body = await request.json()
+        return web.json_response({"base_url": save_private_address(body.get("base_url", ""))})
+    except Exception as error:
+        return web.json_response({"base_url": "", "error": str(error)})
+
+
 async def _models_endpoint(request):
     """Let the node's UI list what the server is running."""
     from aiohttp import web
@@ -652,5 +699,7 @@ try:  # Only available inside ComfyUI; the tests import this module standalone.
 
     if getattr(PromptServer, "instance", None) is not None:
         PromptServer.instance.routes.get("/sparkstudio/models")(_models_endpoint)
+        PromptServer.instance.routes.get("/sparkstudio/address")(_address_endpoint)
+        PromptServer.instance.routes.post("/sparkstudio/address")(_address_endpoint)
 except Exception:  # pragma: no cover - no server in a bare import
     pass

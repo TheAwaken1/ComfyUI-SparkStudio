@@ -75,18 +75,21 @@ desktop. Use one of:
 
 ### Hiding your address
 
-Two separate problems, two answers.
+Anything typed into a widget is saved inside the workflow file and is visible
+on screen. Two ways to avoid that.
 
-**To keep it off a screen recording**, switch on `hide_address` on the node. The
-address field disappears from the node immediately. Switch it back off to edit.
-This is the easy one and needs no setup.
+**The easy way: switch on `hide_address` on the node.** The address is saved
+privately outside the graph and the field is cleared, so it is off screen and out of
+the workflow file at once. Switch the toggle back off to bring it back into the
+field. No setup required, and it covers both problems below.
 
-**To keep it out of a workflow file you share**, the address has to live outside the
-graph, because anything typed into a widget is saved into the JSON. Put it in an
-environment variable named `SPARK_STUDIO_BASE_URL` and leave `base_url` empty.
+**The portable way: an environment variable.** Useful on a shared or scripted
+install, where you want the address configured once for every workflow. Set
+`SPARK_STUDIO_BASE_URL` and leave `base_url` empty.
 
-The node then reads it at run time. It never enters the workflow, and it is masked
-as `<hidden>` in error messages, so a failed connection mid-recording cannot leak it.
+Either way the node resolves the address at run time, and it is masked as
+`<hidden>` in error messages, so a failed connection mid-recording cannot leak it.
+A typed value wins, then the environment variable, then the privately stored one.
 
 #### Setting the variable
 

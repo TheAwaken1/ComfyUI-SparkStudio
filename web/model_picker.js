@@ -32,6 +32,8 @@ function chain(widget, extra) {
   };
 }
 
+console.log("[SparkStudio] node helpers loaded");
+
 app.registerExtension({
   name: "SparkStudio.NodeHelpers",
   async beforeRegisterNodeDef(nodeType, nodeData) {
@@ -74,29 +76,72 @@ app.registerExtension({
         return { models: known, error: data.error };
       }
 
-      function applyPrivacy() {
+      async function readSaved() {
+        try {
+          const response = await fetch("/sparkstudio/address");
+          return response.ok ? (await response.json()).base_url || "" : "";
+        } catch (error) {
+          return "";
+        }
+      }
+
+      async function writeSaved(address) {
+        try {
+          await fetch("/sparkstudio/address", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ base_url: address }),
+          });
+        } catch (error) {
+          console.error("[SparkStudio]", error);
+        }
+      }
+
+      // Hiding works by moving the address out of the graph entirely rather
+      // than by trying to hide a widget, which the Vue renderer ignores.
+      async function applyPrivacy() {
         const on = !!(hideWidget && hideWidget.value);
-        urlWidget.options = urlWidget.options || {};
-        urlWidget.options.hidden = on;
-        if (node.setSize && node.computeSize) node.setSize(node.computeSize());
+        if (on) {
+          const typed = String(urlWidget.value || "").trim();
+          if (typed) await writeSaved(typed);
+          urlWidget.value = "";
+        } else {
+          const saved = await readSaved();
+          if (saved && !String(urlWidget.value || "").trim()) urlWidget.value = saved;
+        }
         node.setDirtyCanvas(true, true);
+        refresh();
       }
 
       chain(urlWidget, () => refresh());
-      if (hideWidget) chain(hideWidget, applyPrivacy);
+      if (hideWidget) {
+        chain(hideWidget, applyPrivacy);
+        // A widget callback is not guaranteed to fire in every frontend
+        // build, so also watch the value directly.
+        let last = !!hideWidget.value;
+        const timer = setInterval(() => {
+          const now = !!hideWidget.value;
+          if (now !== last) {
+            last = now;
+            applyPrivacy();
+          }
+        }, 400);
+        const onRemoved = node.onRemoved;
+        node.onRemoved = function () {
+          clearInterval(timer);
+          return onRemoved ? onRemoved.apply(this, arguments) : undefined;
+        };
+      }
 
       // Configure runs when a saved workflow loads, so re-apply then too.
       const onConfigure = node.onConfigure;
       node.onConfigure = function () {
         const result = onConfigure ? onConfigure.apply(this, arguments) : undefined;
-        setTimeout(applyPrivacy, 0);
+        setTimeout(refresh, 0);
         return result;
       };
 
-      setTimeout(() => {
-        applyPrivacy();
-        refresh();
-      }, 400);
+      setTimeout(refresh, 400);
       return created;
     };
   },

@@ -392,5 +392,19 @@ class SparkStudioNodeTests(unittest.TestCase):
             self.assertEqual(node.served_models("http://spark:8000/v1"), ["one", "two"])
 
 
+    def test_hide_address_is_a_ui_toggle_that_does_not_change_the_request(self):
+        """Hiding is for screen recordings; it must not alter behaviour."""
+        self.assertIn("hide_address", node.SparkStudioChat.INPUT_TYPES()["optional"])
+        sent = []
+        for hidden in (False, True):
+            opener = FakeOpener()
+            with patch.object(node, "build_opener", return_value=opener):
+                node.SparkStudioChat().generate("Hello", "http://spark:8888/v1",
+                                                "test-model", 64, 0.7, 0.95,
+                                                hide_address=hidden)
+            sent.append(json.loads(opener.request.data))
+        self.assertEqual(sent[0], sent[1])
+
+
 if __name__ == "__main__":
     unittest.main()

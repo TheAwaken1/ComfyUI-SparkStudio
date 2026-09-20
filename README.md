@@ -75,20 +75,46 @@ desktop. Use one of:
 
 ### Hiding your address
 
-A typed address is saved inside the workflow file and is visible in screenshots and
-screen recordings. To keep it private, set `SPARK_STUDIO_BASE_URL` in ComfyUI's
-environment and leave `base_url` empty, or set it to `env`.
+Two separate problems, two answers.
+
+**To keep it off a screen recording**, switch on `hide_address` on the node. The
+address field disappears from the node immediately. Switch it back off to edit.
+This is the easy one and needs no setup.
+
+**To keep it out of a workflow file you share**, the address has to live outside the
+graph, because anything typed into a widget is saved into the JSON. Put it in an
+environment variable named `SPARK_STUDIO_BASE_URL` and leave `base_url` empty.
+
+The node then reads it at run time. It never enters the workflow, and it is masked
+as `<hidden>` in error messages, so a failed connection mid-recording cannot leak it.
+
+#### Setting the variable
+
+In Pinokio, open the launcher's `start.js` and add it to the `env` block that is
+already there:
+
+```js
+env: {
+  TOKENIZERS_PARALLELISM: "false",
+  SPARK_STUDIO_BASE_URL: "http://100.x.y.z:7860/api/engine/v1"
+},
+```
+
+Save, stop the app, and start it again.
+
+Launching ComfyUI yourself instead, set it in the same terminal first:
 
 ```bash
 set SPARK_STUDIO_BASE_URL=http://100.x.y.z:7860/api/engine/v1
+python main.py
 ```
 
-The node then reads the address at run time. It never appears on the node, never
-enters the workflow JSON, and is masked as `<hidden>` in any error message, so a
-failed connection during a recording does not leak it either.
+On macOS or Linux use `export` in place of `set`. To make it permanent on Windows,
+search for "Edit environment variables for your account" and add it there, then
+restart ComfyUI.
 
-This is also the right way to share a workflow that uses the node. The person you
-send it to sets their own address once and the graph works unchanged.
+Either way, confirm it worked: leave `base_url` empty and run the node. If the
+variable is missing the node says so instead of failing silently.
 
 ### Authentication
 

@@ -462,6 +462,7 @@ class SparkStudioChat:
                 "image": ("IMAGE",),
                 "timeout_seconds": ("INT", {"default": 180, "min": 5, "max": 3600}),
                 "strip_thinking": ("BOOLEAN", {"default": True}),
+                "hide_address": ("BOOLEAN", {"default": False, "tooltip": "Hide base_url on the node while screen recording. The address is still inside the workflow file; set SPARK_STUDIO_BASE_URL to keep it out of that too."}),
             },
             "hidden": {"prompt_graph": "PROMPT", "unique_id": "UNIQUE_ID"},
         }
@@ -473,7 +474,7 @@ class SparkStudioChat:
 
     def generate(self, prompt, base_url, model, max_tokens, temperature, top_p,
                  system_prompt="", image=None, timeout_seconds=180, strip_thinking=True,
-                 prompt_graph=None, unique_id=None):
+                 hide_address=False, prompt_graph=None, unique_id=None):
         base_url = resolve_base_url(base_url)
         url = chat_url(base_url)
         headers = {"Content-Type": "application/json"}

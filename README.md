@@ -91,23 +91,37 @@ Output is `generated_text`, a `STRING` you can wire anywhere.
 
 ## Songwriting mode
 
-This is optional and only activates on its own.
+This is optional and turns itself on. If the node's text feeds a node that takes
+lyrics plus a style or a length, the node treats the job as songwriting.
 
-If the node's text reaches an `FL_YuE2_Plan` whose composition feeds an
-`FL_YuE2_Render`, the node reads the render's duration from the graph and writes a
-lyric sized for that duration instead of an arbitrary one. It also reads the Compose
-node's style text and uses it to steer mood and cadence, while forbidding production
-words such as instrument names, tempo and artist references from appearing as lyrics.
+It is matched by shape, not by pack name, so it works across the YuE2 forks and
+other song models rather than one specific pack. Verified against FL-YuE2, the
+YuE2Sampler and YuE2Plan packs, ACE-Step, and MiniMax Music 3.
 
-When the request asks for two verses and two choruses, the node writes each section
-in a separate call, refuses lines copied between sections, and repeats the finished
-chorus exactly.
+In song mode the node reads the style text from the song node and uses it to steer
+mood and cadence, while forbidding production words such as instrument names, tempo
+and artist references from being sung as lyrics. When the request asks for two
+verses and two choruses, it writes each section in a separate call, refuses lines
+copied between sections, and repeats the finished chorus exactly.
 
-A prompt that is not connected to a YuE2 chain behaves as an ordinary chat node.
+### Length
 
-Requires [ComfyUI-FL-YuE2](https://github.com/filliptm/ComfyUI-FL-YuE2). Note that
-upstream names the render input `max_duration`; some forks rename it, and the node
-looks for either.
+Length is optional, because packs express it three different ways.
+
+| The song node exposes | What the node does |
+|---|---|
+| Seconds, such as `max_duration`, `target_duration` or `duration` | Sizes the lyric to that many seconds |
+| A token budget, such as `semantic_max_tokens` | Converts it at 25 semantic tokens per second |
+| Nothing at all | Applies style and structure guidance with no length target |
+
+The length is also found when it sits on a renderer further down the chain, as in
+FL-YuE2, or on a settings node feeding the sampler.
+
+Note that these values are usually an upper bound rather than an exact length.
+A `semantic_max_tokens` of 9000 reads as six minutes. Lower it to target a shorter
+song, for example 4500 for roughly three minutes.
+
+A prompt not connected to a song node behaves as an ordinary chat node.
 
 ## Programmatic use
 

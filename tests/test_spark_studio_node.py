@@ -281,5 +281,83 @@ class SparkStudioNodeTests(unittest.TestCase):
         self.assertIn("firewall", timed)
 
 
+    def _chat_graph(self, song_node):
+        graph = {"18": {"class_type": "SparkStudioChat", "inputs": {"prompt": "Write a song"}}}
+        graph.update(song_node)
+        return graph
+
+    def test_sampler_pack_reads_length_from_semantic_token_budget(self):
+        """The ScryptHunter YuE2 pack has no duration input, only tokens."""
+        graph = self._chat_graph({"5": {"class_type": "YuE2Sampler", "inputs": {
+            "lyrics": ["18", 0], "style": "Slow ballad", "semantic_max_tokens": 9000}}})
+        seconds, style = node.song_context(graph, "18")
+        self.assertEqual(seconds, 360)
+        self.assertEqual(style, "Slow ballad")
+
+    def test_length_is_found_on_a_settings_node_feeding_the_sampler(self):
+        graph = self._chat_graph({
+            "5": {"class_type": "YuE2Sampler", "inputs": {
+                "lyrics": ["18", 0], "style": "Trap", "semantic_max_tokens": ["6", 0]}},
+            "6": {"class_type": "YuE2SamplingSettings", "inputs": {"semantic_max_tokens": 4500}},
+        })
+        self.assertEqual(node.song_context(graph, "18")[0], 180)
+
+    def test_song_mode_without_any_length_control(self):
+        """Some packs expose no length at all; song guidance still applies."""
+        graph = self._chat_graph({"5": {"class_type": "SomeOtherYuE2", "inputs": {
+            "lyrics": ["18", 0], "style": "Dream pop"}}})
+        seconds, style = node.song_context(graph, "18")
+        self.assertIsNone(seconds)
+        self.assertEqual(style, "Dream pop")
+
+    def test_song_mode_without_length_still_sends_style_guidance(self):
+        graph = self._chat_graph({"5": {"class_type": "YuE2Plan", "inputs": {
+            "lyrics": ["18", 0], "style": "Kalimba and rain"}}})
+        opener = FakeOpener()
+        with patch.object(node, "build_opener", return_value=opener):
+            node.SparkStudioChat().generate("Write a song", "http://spark:8888/v1",
+                                            "test-model", 512, 0.7, 0.95,
+                                            prompt_graph=graph, unique_id="18")
+        sent = json.loads(opener.request.data)["messages"][-1]["content"]
+        self.assertIn("release-quality song lyric", sent)
+        self.assertIn("Kalimba and rain", sent)
+        self.assertIn("NEVER", sent, "production terms must not be sung")
+
+    def test_ace_step_style_node_is_recognised(self):
+        graph = self._chat_graph({"5": {"class_type": "TextEncodeAceStepAudio1.5", "inputs": {
+            "lyrics": ["18", 0], "tags": "indie rock", "duration": 120}}})
+        self.assertEqual(node.song_context(graph, "18"), (120, "indie rock"))
+
+    def test_lrc_and_utility_nodes_are_not_mistaken_for_song_nodes(self):
+        """These take lyrics and a number, but they render nothing."""
+        for class_type, inputs in (
+            ("SongLyricsToLRC", {"lyrics": ["18", 0], "seconds": 180, "offset_seconds": 0}),
+            ("MiniMaxLyricsToLRC", {"lyrics": ["18", 0], "seconds": 180}),
+            ("SaveLyricsFileNode", {"lyrics": ["18", 0]}),
+        ):
+            with self.subTest(class_type=class_type):
+                graph = self._chat_graph({"5": {"class_type": class_type, "inputs": inputs}})
+                self.assertIsNone(node.song_context(graph, "18"))
+
+    def test_lyrics_from_a_different_source_do_not_trigger_song_mode(self):
+        graph = {
+            "18": {"class_type": "SparkStudioChat", "inputs": {"prompt": "Describe the art"}},
+            "9": {"class_type": "OtherText", "inputs": {"text": "hand written"}},
+            "5": {"class_type": "YuE2Sampler", "inputs": {
+                "lyrics": ["9", 0], "style": "Folk", "semantic_max_tokens": 4500}},
+        }
+        self.assertIsNone(node.song_context(graph, "18"))
+
+    def test_shortest_length_wins_when_several_are_present(self):
+        graph = self._chat_graph({
+            "2": {"class_type": "FL_YuE2_Plan", "inputs": {"lyrics": ["18", 0], "style": "Rock"}},
+            "3": {"class_type": "FL_YuE2_Render", "inputs": {
+                "composition": ["2", 0], "max_duration": 240}},
+            "4": {"class_type": "FL_YuE2_Render", "inputs": {
+                "composition": ["2", 0], "max_duration": 150}},
+        })
+        self.assertEqual(node.song_context(graph, "18")[0], 150)
+
+
 if __name__ == "__main__":
     unittest.main()

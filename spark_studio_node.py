@@ -138,41 +138,110 @@ def _source_id(value):
     return None
 
 
+# A song node is any node that takes lyrics plus either a style or a length.
+# Matching on shape rather than class names keeps this working across the
+# several YuE2 forks and other song models, instead of one hard coded pack.
+STYLE_KEYS = ("style", "style_prompt", "genre", "tags")
+SECONDS_KEYS = ("max_duration", "target_duration", "duration", "max_seconds", "song_duration")
+SEMANTIC_TOKEN_KEYS = ("semantic_max_tokens",)
+# YuE2 emits 25 semantic tokens per second of audio.
+SEMANTIC_TOKENS_PER_SECOND = 25.0
+
+
+def _positive_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if value > 0 else None
+
+
+def is_song_node(inputs):
+    if "lyrics" not in inputs:
+        return False
+    return any(key in inputs for key in STYLE_KEYS + SECONDS_KEYS)
+
+
+def node_seconds(inputs):
+    """Song length from a node, whether stated in seconds or in tokens."""
+    for key in SECONDS_KEYS:
+        seconds = _positive_number(inputs.get(key))
+        if seconds:
+            return seconds
+    for key in SEMANTIC_TOKEN_KEYS:
+        tokens = _positive_number(inputs.get(key))
+        if tokens:
+            return tokens / SEMANTIC_TOKENS_PER_SECOND
+    return None
+
+
 def song_context(prompt_graph, unique_id):
-    """Find Render's duration only when this node feeds its Compose lyrics."""
+    """Find the song node this text feeds, plus its style and length.
+
+    Returns (seconds_or_None, style), or None when the text is not feeding a
+    song at all. Seconds is optional on purpose: several packs express length
+    only as a token budget, and some expose no length control whatsoever. Song
+    guidance is still worth applying in those graphs.
+    """
     if not isinstance(prompt_graph, dict) or unique_id is None:
         return None
     nodes = {str(key): value for key, value in prompt_graph.items() if isinstance(value, dict)}
     own_id = str(unique_id)
     if own_id not in nodes:
         return None
-    reachable = {own_id}
-    changed = True
-    while changed:
-        changed = False
-        for node_id, data in nodes.items():
-            if node_id in reachable or data.get("class_type") in ("FL_YuE2_Plan", "FL_YuE2_Render"):
-                continue
-            if any(_source_id(value) in reachable for value in data.get("inputs", {}).values()):
-                reachable.add(node_id)
-                changed = True
-    plans = {node_id: data for node_id, data in nodes.items()
-             if data.get("class_type") == "FL_YuE2_Plan"
-             and _source_id(data.get("inputs", {}).get("lyrics")) in reachable}
-    matches = []
-    for data in nodes.values():
-        if data.get("class_type") != "FL_YuE2_Render":
-            continue
-        inputs = data.get("inputs", {})
-        plan_id = _source_id(inputs.get("composition"))
-        # Upstream FL-YuE2 calls this max_duration; some forks rename it.
-        duration = inputs.get("max_duration")
-        if duration is None:
-            duration = inputs.get("target_duration")
-        if plan_id in plans and isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
-            style = plans[plan_id].get("inputs", {}).get("style", "")
-            matches.append((int(duration), style if isinstance(style, str) else ""))
-    return min(matches, key=lambda match: match[0]) if matches else None
+
+    def inputs_of(node_id):
+        return nodes[node_id].get("inputs", {}) or {}
+
+    def downstream_of(seed, stop_at_songs):
+        seen = {seed}
+        changed = True
+        while changed:
+            changed = False
+            for node_id in nodes:
+                if node_id in seen:
+                    continue
+                if stop_at_songs and is_song_node(inputs_of(node_id)):
+                    continue
+                if any(_source_id(value) in seen for value in inputs_of(node_id).values()):
+                    seen.add(node_id)
+                    changed = True
+        return seen
+
+    # Walk forward but stop at song nodes, so the lyrics input we land on is
+    # genuinely fed by this node rather than by some other text source.
+    carries_lyrics = downstream_of(own_id, True)
+    songs = [node_id for node_id in nodes
+             if is_song_node(inputs_of(node_id))
+             and _source_id(inputs_of(node_id).get("lyrics")) in carries_lyrics]
+    if not songs:
+        return None
+
+    best = None
+    for song_id in songs:
+        style = ""
+        for key in STYLE_KEYS:
+            value = inputs_of(song_id).get(key)
+            if isinstance(value, str) and value.strip():
+                style = value
+                break
+        # Length may sit on the song node, on a renderer further down the
+        # chain, or on a settings node feeding it.
+        related = downstream_of(song_id, False)
+        for value in inputs_of(song_id).values():
+            provider = _source_id(value)
+            if provider is not None:
+                related.add(provider)
+        seconds = None
+        for node_id in related:
+            found = node_seconds(inputs_of(node_id))
+            if found and (seconds is None or found < seconds):
+                seconds = found
+        candidate = (int(seconds) if seconds else None, style)
+        if best is None:
+            best = candidate
+        elif candidate[0] is not None and (best[0] is None or candidate[0] < best[0]):
+            best = candidate
+    return best
+
 
 
 def lyric_budget(seconds):
@@ -308,6 +377,25 @@ def duration_instruction(seconds, min_lines, max_lines, min_words, max_words, st
             + "Output only section tags and final singable lyrics—no commentary.")
 
 
+def song_instruction(style="", section_plan=""):
+    """Song guidance for a graph that states no length anywhere.
+
+    Several YuE2 packs size the song by token budget or not at all. Without a
+    number there is nothing to fit, but style handling, section structure and
+    the ban on singing production terms are all still worth applying.
+    """
+    return ("Write a complete, release-quality song lyric. Build a clear emotional arc across "
+            "sections and make the chorus land with a memorable hook. Use specific sensory "
+            "details, fresh imagery, conversational truth, and meaningful progression instead "
+            "of generic filler or merely restating the request. Every line must sound like "
+            "something a vocalist would actually sing.\n\n"
+            "NON-LYRIC PRODUCTION METADATA (use only to shape cadence, mood, and phrasing; NEVER "
+            "quote, paraphrase, list, or sing any of these production terms): "
+            f"{style.strip()[:500] or 'not supplied'}\n\n"
+            "Section tags do not count as sung lines. " + (section_plan + " " if section_plan else "")
+            + "Output only section tags and final singable lyrics, with no commentary.")
+
+
 def editor_instruction(lines, words, budget, style="", section_plan=""):
     min_lines, max_lines, min_words, max_words = budget
     target_lines = round((min_lines + max_lines) / 2)
@@ -368,14 +456,21 @@ class SparkStudioChat:
             model = discover_model(base_url, headers, timeout_seconds)
             print(f"[SparkStudio] Model field blank; using {model!r}")
         context = song_context(prompt_graph, unique_id)
-        budget = lyric_budget(context[0]) if context else None
-        required_sections = requested_sections(prompt, system_prompt) if budget else set()
+        song_mode = context is not None
+        seconds = context[0] if context else None
+        style = context[1] if context else ""
+        # Length is optional. Song guidance applies whenever this text feeds a
+        # song node, even when the pack exposes no duration control at all.
+        budget = lyric_budget(seconds) if seconds else None
+        required_sections = requested_sections(prompt, system_prompt) if song_mode else set()
         requirements = "\n".join(part for part in (str(system_prompt).strip(), str(prompt).strip()) if part)
-        section_plan = concrete_section_plan(requirements) if budget else ""
+        section_plan = concrete_section_plan(requirements) if song_mode else ""
         content = str(prompt)
         if budget:
             content += "\n\n" + duration_instruction(
-                context[0], *budget, style=context[1], section_plan=section_plan)
+                seconds, *budget, style=style, section_plan=section_plan)
+        elif song_mode:
+            content += "\n\n" + song_instruction(style=style, section_plan=section_plan)
         parts = image_parts(image)
         image_note = ("IMAGE IS A PRIMARY LYRIC SOURCE: study the attached image before writing. Use only "
                       "details that are visibly supported (setting, light, colors, objects, expressions, "
@@ -418,7 +513,7 @@ class SparkStudioChat:
                      "Use concrete sensory detail, fresh imagery, conversational truth, and rhyme only when "
                      "it sounds effortless. Preserve the user's facts; invent no new biographical facts.\n\n"
                      "PRODUCTION METADATA—sound guidance only; never quote or sing these words:\n"
-                     f"{context[1].strip()[:500] or 'not supplied'}\n\n"
+                     f"{style.strip()[:500] or 'not supplied'}\n\n"
                      f"USER'S SONG BRIEF:\n{requirements}\n\n"
                      f"SECTIONS ALREADY WRITTEN—maintain continuity but do not repeat their ideas:\n{prior}"},
                 ]
@@ -455,7 +550,8 @@ class SparkStudioChat:
                     + "\n\n[bridge]\n" + "\n".join(written["bridge"])
                     + "\n\n[outro]\n" + "\n".join(written["outro"]))
             lines, words = lyric_size(text)
-            print(f"[SparkStudio] Section-written lyrics for {context[0]}s: {lines} lines, {words} words")
+            target = f"{seconds}s" if seconds else "unspecified length"
+            print(f"[SparkStudio] Section-written lyrics for {target}: {lines} lines, {words} words")
             return (text,)
         for attempt in range(3 if budget else 1):
             result = post_chat(url, payload, headers, timeout_seconds)
@@ -469,8 +565,8 @@ class SparkStudioChat:
                 return (text,)
             lines, words = lyric_size(text)
             complete = has_requested_sections(text, required_sections)
-            if attempt > 0 and complete and lyrics_fit_duration(lines, words, context[0], budget):
-                print(f"[SparkStudio] Lyrics fit {context[0]}s budget: {lines} lines, {words} words")
+            if attempt > 0 and complete and lyrics_fit_duration(lines, words, seconds, budget):
+                print(f"[SparkStudio] Lyrics fit {seconds}s budget: {lines} lines, {words} words")
                 return (text,)
             reason = ("editorial polish" if attempt == 0 else
                       "missing requested sections" if not complete else "duration/quality range")
@@ -480,7 +576,7 @@ class SparkStudioChat:
             # Start a clean editorial request. Some OpenAI-compatible engines
             # strongly anchor on their prior assistant turn and echo the draft
             # even when asked to shorten it in the same conversation.
-            editor_content = (editor_instruction(lines, words, budget, style=context[1], section_plan=section_plan)
+            editor_content = (editor_instruction(lines, words, budget, style=style, section_plan=section_plan)
                               + "\n\nORIGINAL USER REQUIREMENTS:\n" + requirements
                               + "\n\nDRAFT TO REWRITE:\n" + text)
             payload["messages"] = [
@@ -494,6 +590,6 @@ class SparkStudioChat:
                     {"type": "text", "text": payload["messages"][-1]["content"]}
                 ] + parts
             payload["temperature"] = min(1.0, max(0.35, float(temperature) + 0.1 * attempt))
-        raise ValueError(f"Spark Studio could not fit lyrics into {context[0]}s "
+        raise ValueError(f"Spark Studio could not fit lyrics into {seconds}s "
                          f"({budget[0]}-{budget[1]} lines/{budget[2]}-{budget[3]} words) "
                          "after 3 tries. Adjust the song idea or allow a longer render.")

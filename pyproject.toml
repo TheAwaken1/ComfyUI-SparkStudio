@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-sparkstudio"
 description = "Send a ComfyUI prompt to a DGX Spark or any OpenAI-compatible model server and get text back."
-version = "1.0.0"
+version = "1.0.1"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"

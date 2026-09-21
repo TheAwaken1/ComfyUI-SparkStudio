@@ -1,6 +1,6 @@
 # ComfyUI-SparkStudio
 
-![ComfyUI-SparkStudio](images/icon.png)
+![ComfyUI-SparkStudio](images/banner.png)
 
 A single ComfyUI node that sends a prompt to a model server and returns a `STRING`.
 It was built to offload writing to an NVIDIA DGX Spark while the local GPU renders
